@@ -6,6 +6,7 @@ const HELP = `paisa bot 💰
 *got 45000 salary* — log income
 *spent 100 cash on transport* — cash payment
 *balance* — this month summary
+*ask anything* — chat with AI about your finances
 *help* — show this message
 
 Categories: food, transport, apparel, skincare, bills, entertainment, misc
@@ -41,11 +42,9 @@ Respond ONLY with valid JSON, nothing else:
 }
 
 async function getMonthSummary(supabase) {
-  const now    = new Date();
-  const year   = now.getFullYear();
-  const month  = String(now.getMonth() + 1).padStart(2, '0');
-
-  // ✅ Fix: proper December rollover
+  const now       = new Date();
+  const year      = now.getFullYear();
+  const month     = String(now.getMonth() + 1).padStart(2, '0');
   const nextDate  = new Date(year, now.getMonth() + 1, 1);
   const nextYear  = nextDate.getFullYear();
   const nextMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
@@ -69,12 +68,94 @@ async function getMonthSummary(supabase) {
   return `*${months[now.getMonth()]} summary*\n\nIncome: ₹${Math.round(income)}\nSpent:  ₹${Math.round(expense)}\nSaved:  ₹${Math.round(income - expense)}\n\nTop spending:\n${topCats || '  (none yet)'}`;
 }
 
+async function buildFinanceContext(supabase) {
+  const now       = new Date();
+  const year      = now.getFullYear();
+  const month     = String(now.getMonth() + 1).padStart(2, '0');
+  const nextDate  = new Date(year, now.getMonth() + 1, 1);
+  const nextYear  = nextDate.getFullYear();
+  const nextMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+  const monthName = now.toLocaleString('en-IN', { month: 'long' });
+  const daysInMonth = new Date(year, now.getMonth() + 1, 0).getDate();
+  const daysPassed  = now.getDate();
+
+  const { data } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('user_id', process.env.VITE_USER_ID)
+    .gte('txn_date', `${year}-${month}-01`)
+    .lt('txn_date',  `${nextYear}-${nextMonth}-01`)
+    .order('txn_date', { ascending: false });
+
+  const txns    = data ?? [];
+  const income  = txns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const expense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+
+  const cats = {};
+  for (const t of txns.filter(t => t.type === 'expense'))
+    cats[t.category] = (cats[t.category] ?? 0) + Number(t.amount);
+
+  const catLines = Object.entries(cats)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `  - ${k}: ₹${Math.round(v)}`)
+    .join('\n');
+
+  const recentLines = txns.slice(0, 10)
+    .map(t => `  - ${t.txn_date} | ${t.type === 'income' ? '+' : '-'}₹${t.amount} | ${t.category} | ${t.description}`)
+    .join('\n');
+
+  return `You are a friendly personal finance assistant for "paisa", a budget tracking app.
+The user's currency is Indian Rupees (₹). Be concise and practical. Max 3-4 sentences per reply.
+Never make up data — only use what's provided below.
+The user is messaging you via WhatsApp so keep responses short and clear, no markdown except *bold*.
+
+=== ${monthName} ${year} (day ${daysPassed} of ${daysInMonth}) ===
+Total income:  ₹${Math.round(income)}
+Total spent:   ₹${Math.round(expense)}
+Saved so far:  ₹${Math.round(income - expense)}
+
+=== Spending by category ===
+${catLines || '  (no expenses yet)'}
+
+=== Recent transactions ===
+${recentLines || '  (none yet)'}`;
+}
+
+async function askAi(supabase, userMessage) {
+  const context = await buildFinanceContext(supabase);
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.VITE_GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 300,
+      messages: [
+        { role: 'system', content: context },
+        { role: 'user',   content: userMessage },
+      ],
+    }),
+  });
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? 'Sorry, I could not get a response. Try again.';
+}
+
+function isAiQuestion(text) {
+  const triggers = [
+    'ask', 'why', 'how', 'what', 'where', 'when', 'should', 'can i',
+    'am i', 'is my', 'analyse', 'analyze', 'suggest', 'advice', 'tip',
+    'overspend', 'saving', 'budget', 'cut', 'reduce', 'compare', '?',
+  ];
+  return triggers.some(t => text.includes(t));
+}
+
 function twiml(msg) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`;
 }
 
 export default async function handler(req, res) {
-  // ✅ Fix: create client inside handler so env vars are guaranteed to be loaded
   const supabase = createClient(
     process.env.VITE_SUPABASE_URL,
     process.env.VITE_SUPABASE_SERVICE_KEY
@@ -99,6 +180,17 @@ export default async function handler(req, res) {
     catch { return res.send(twiml('Could not fetch balance. Try again.')); }
   }
 
+  // AI chat mode — questions and analysis
+  if (isAiQuestion(text)) {
+    try {
+      const reply = await askAi(supabase, text);
+      return res.send(twiml(reply));
+    } catch {
+      return res.send(twiml('Could not reach AI right now. Try again.'));
+    }
+  }
+
+  // Log expense / income
   try {
     const parsed = await parseMessage(text);
     if (!parsed.amount || parsed.amount <= 0) throw new Error('no amount');
