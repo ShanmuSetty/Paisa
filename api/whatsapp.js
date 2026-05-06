@@ -16,7 +16,7 @@ async function parseMessage(text) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      'Authorization': `Bearer ${process.env.VITE_GROQ_API_KEY}`,
     },
     body: JSON.stringify({
       model: 'llama-3.3-70b-versatile',
@@ -53,7 +53,7 @@ async function getMonthSummary(supabase) {
   const { data } = await supabase
     .from('transactions')
     .select('type, amount, category')
-    .eq('user_id', process.env.PAISA_USER_ID)
+    .eq('user_id', process.env.VITE_USER_ID)
     .gte('txn_date', `${year}-${month}-01`)
     .lt('txn_date',  `${nextYear}-${nextMonth}-01`);
 
@@ -76,8 +76,8 @@ function twiml(msg) {
 export default async function handler(req, res) {
   // ✅ Fix: create client inside handler so env vars are guaranteed to be loaded
   const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
+    process.env.VITE_SUPABASE_URL,
+    process.env.VITE_SUPABASE_SERVICE_KEY
   );
 
   res.setHeader('Content-Type', 'text/xml');
@@ -104,7 +104,7 @@ export default async function handler(req, res) {
     if (!parsed.amount || parsed.amount <= 0) throw new Error('no amount');
     const today = new Date().toISOString().split('T')[0];
     const { error } = await supabase.from('transactions').insert({
-      user_id: process.env.PAISA_USER_ID,
+      user_id: process.env.VITE_USER_ID,
       description: parsed.description,
       amount: parsed.amount,
       type: parsed.type,
