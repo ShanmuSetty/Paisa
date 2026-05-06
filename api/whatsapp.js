@@ -1,10 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
 const HELP = `paisa bot 💰
 
 *spent 250 on food* — log expense
@@ -45,27 +40,33 @@ Respond ONLY with valid JSON, nothing else:
   return JSON.parse(raw.replace(/```json|```/g, '').trim());
 }
 
-async function getMonthSummary() {
-  const now   = new Date();
-  const year  = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const next  = String(now.getMonth() + 2).padStart(2, '0');
+async function getMonthSummary(supabase) {
+  const now    = new Date();
+  const year   = now.getFullYear();
+  const month  = String(now.getMonth() + 1).padStart(2, '0');
+
+  // ✅ Fix: proper December rollover
+  const nextDate  = new Date(year, now.getMonth() + 1, 1);
+  const nextYear  = nextDate.getFullYear();
+  const nextMonth = String(nextDate.getMonth() + 1).padStart(2, '0');
+
   const { data } = await supabase
     .from('transactions')
     .select('type, amount, category')
     .eq('user_id', process.env.PAISA_USER_ID)
     .gte('txn_date', `${year}-${month}-01`)
-    .lt('txn_date',  `${year}-${next}-01`);
+    .lt('txn_date',  `${nextYear}-${nextMonth}-01`);
+
   const txns    = data ?? [];
-  const income  = txns.filter(t => t.type === 'income').reduce((s,t) => s + Number(t.amount), 0);
-  const expense = txns.filter(t => t.type === 'expense').reduce((s,t) => s + Number(t.amount), 0);
+  const income  = txns.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+  const expense = txns.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
   const cats = {};
   for (const t of txns.filter(t => t.type === 'expense'))
     cats[t.category] = (cats[t.category] ?? 0) + Number(t.amount);
-  const topCats = Object.entries(cats).sort((a,b) => b[1]-a[1]).slice(0,3)
-    .map(([k,v]) => `  ${k}: ₹${Math.round(v)}`).join('\n');
+  const topCats = Object.entries(cats).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([k, v]) => `  ${k}: ₹${Math.round(v)}`).join('\n');
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `*${months[now.getMonth()]} summary*\n\nIncome: ₹${Math.round(income)}\nSpent:  ₹${Math.round(expense)}\nSaved:  ₹${Math.round(income-expense)}\n\nTop spending:\n${topCats || '  (none yet)'}`;
+  return `*${months[now.getMonth()]} summary*\n\nIncome: ₹${Math.round(income)}\nSpent:  ₹${Math.round(expense)}\nSaved:  ₹${Math.round(income - expense)}\n\nTop spending:\n${topCats || '  (none yet)'}`;
 }
 
 function twiml(msg) {
@@ -73,6 +74,12 @@ function twiml(msg) {
 }
 
 export default async function handler(req, res) {
+  // ✅ Fix: create client inside handler so env vars are guaranteed to be loaded
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+
   res.setHeader('Content-Type', 'text/xml');
 
   if (req.method === 'GET') {
@@ -88,7 +95,7 @@ export default async function handler(req, res) {
     return res.send(twiml(HELP));
 
   if (text === 'balance' || text === 'summary') {
-    try { return res.send(twiml(await getMonthSummary())); }
+    try { return res.send(twiml(await getMonthSummary(supabase))); }
     catch { return res.send(twiml('Could not fetch balance. Try again.')); }
   }
 
