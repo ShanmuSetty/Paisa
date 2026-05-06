@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/whatsapp.js": {
+      "memory": 256
+    }
+  }
+}
