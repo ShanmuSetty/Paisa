@@ -1,4 +1,4 @@
-import { createClient } from require('@supabase/supabase-js');
+import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -56,7 +56,7 @@ async function getMonthSummary() {
     .eq('user_id', process.env.PAISA_USER_ID)
     .gte('txn_date', `${year}-${month}-01`)
     .lt('txn_date',  `${year}-${next}-01`);
-  const txns   = data ?? [];
+  const txns    = data ?? [];
   const income  = txns.filter(t => t.type === 'income').reduce((s,t) => s + Number(t.amount), 0);
   const expense = txns.filter(t => t.type === 'expense').reduce((s,t) => s + Number(t.amount), 0);
   const cats = {};
@@ -72,7 +72,7 @@ function twiml(msg) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   res.setHeader('Content-Type', 'text/xml');
 
   if (req.method === 'GET') {
@@ -112,4 +112,4 @@ module.exports = async function handler(req, res) {
   } catch {
     return res.send(twiml(`Couldn't understand that.\n\nTry: *spent 200 on food*\nSend *help* for all commands.`));
   }
-};
+}
